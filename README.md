@@ -18,12 +18,12 @@ To specify multiple interfaces, simply provide a string of comma-separated inter
 
 Supported DAQ variables:
 
-  debug - Enable some additional debugging output printed to stdout.
-  mode=<burst|sched> - Configure the mode for sending and receiving packets to either use the pktio instances directly (burst) or use the OpenDataPlane scheduler and queues (sched - Default).  Currently, if you select burst handling, the DAQ timeout value will be ignored.
+    debug - Enable some additional debugging output printed to stdout.
+    mode=<burst|sched> - Configure the mode for sending and receiving packets to either use the pktio instances directly (burst) or use the OpenDataPlane scheduler and queues (sched - Default).  Currently, if you select burst handling, the DAQ timeout value will be ignored.
 
 Example:
 
-  ./snort -Q --daq-dir /usr/local/lib/daq --daq odp --daq-var mode=sched --daq-var debug -i eth1,eth2,eth3,eth4
+    ./snort -Q --daq-dir /usr/local/lib/daq --daq odp --daq-var mode=sched --daq-var debug -i eth1,eth2,eth3,eth4
   
 This will start Snort in inline mode direcly pairing eth1<->eth2 and eth3<->eth4 for traffic forwarding.  Additional debug output will be enabled and it will handle packets using the ODP scheduler.
 
