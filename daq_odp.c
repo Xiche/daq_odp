@@ -273,7 +273,7 @@ static int odp_daq_start(void *handle)
     }
 
     /* Init this thread */
-    if (odp_init_local())
+    if (odp_init_local(ODP_THREAD_WORKER))
     {
         DPE(odpc->errbuf, "Error: ODP local init failed.");
         goto err;
@@ -289,7 +289,7 @@ static int odp_daq_start(void *handle)
     params.pkt.num     = SHM_PKT_POOL_SIZE/SHM_PKT_POOL_BUF_SIZE;
     params.type        = ODP_POOL_PACKET;
 
-    odpc->pool = odp_pool_create("packet_pool", ODP_SHM_NULL, &params);
+    odpc->pool = odp_pool_create("packet_pool", &params);
     if (odpc->pool == ODP_POOL_INVALID)
     {
         DPE(odpc->errbuf, "Error: packet pool create failed.");

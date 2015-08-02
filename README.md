@@ -3,10 +3,12 @@ OpenDataPlane DAQ Module
 
 The OpenDataPlane project is an open-source, cross-platform set of application programming interfaces (APIs) for the networking data plane.  This module uses OpenDataPlane to receive and send packet data in a manner that conforms to the DAQ Module API.
 
+This module was designed and tested with OpenDataPlane v1.2.0.0.  Their project is still under heavy development and the APIs are very much in flux, meaning that this module will likely not build cleanly against newer versions.  I will try to keep it up-to-date as new versions are tagged.
+
 As there are no released source tarballs yet, you must clone the OpenDataPlane GIT repository and build from that.  To checkout, build, and install OpenDataPlane:
 
-    git clone https://git.linaro.org/lng/odp.git
-    cd odp
+    git clone https://git.linaro.org/lng/odp.git -b v1.2.0.0 odp-v1.2.0.0
+    cd odp-v1.2.0.0
     ./bootstrap
     ./configure
     make
