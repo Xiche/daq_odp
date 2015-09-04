@@ -7,8 +7,8 @@ This module was designed and tested with OpenDataPlane v1.2.0.0.  Their project 
 
 As there are no released source tarballs yet, you must clone the OpenDataPlane GIT repository and build from that.  To checkout, build, and install OpenDataPlane:
 
-    git clone https://git.linaro.org/lng/odp.git -b v1.2.0.0 odp-v1.2.0.0
-    cd odp-v1.2.0.0
+    git clone https://git.linaro.org/lng/odp.git -b v1.3.0.0 odp-v1.3.0.0
+    cd odp-v1.3.0.0
     ./bootstrap
     ./configure
     make

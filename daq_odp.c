@@ -302,7 +302,15 @@ static int odp_daq_start(void *handle)
     /* Create a pktio and scheduled input queue for each interface. */
     for (intf = odpc->interfaces; intf; intf = intf->next)
     {
-        intf->pktio = odp_pktio_open(intf->ifname, odpc->pool);
+        odp_pktio_param_t pktio_param;
+
+        memset(&pktio_param, 0, sizeof(pktio_param));
+        if (odpc->mode == ODP_MODE_PKT_BURST)
+            pktio_param.in_mode = ODP_PKTIN_MODE_RECV; 
+        else if (odpc->mode == ODP_MODE_PKT_SCHED)
+             pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
+
+        intf->pktio = odp_pktio_open(intf->ifname, odpc->pool, &pktio_param);
         if (intf->pktio == ODP_PKTIO_INVALID)
         {
             DPE(odpc->errbuf, "Error: pktio create failed for %s", intf->ifname);
@@ -314,7 +322,8 @@ static int odp_daq_start(void *handle)
         {
             qparam.sched.prio  = ODP_SCHED_PRIO_DEFAULT;
             qparam.sched.sync  = ODP_SCHED_SYNC_ATOMIC;
-            qparam.sched.group = ODP_SCHED_GROUP_DEFAULT;
+            qparam.sched.group = ODP_SCHED_GROUP_ALL;
+            qparam.context = intf;
             snprintf(inq_name, sizeof(inq_name), "%" PRIu64 "-pktio_inq_def", odp_pktio_to_u64(intf->pktio));
 
             inq_def = odp_queue_create(inq_name, ODP_QUEUE_TYPE_PKTIN, &qparam);
@@ -324,8 +333,6 @@ static int odp_daq_start(void *handle)
                 rval = DAQ_ERROR;
                 goto err;
             }
-
-            odp_queue_set_context(inq_def, intf);
 
             if (odp_pktio_inq_setdef(intf->pktio, inq_def))
             {
@@ -513,7 +520,7 @@ static int odp_daq_acquire_scheduled(ODP_Context_t *odpc, int cnt, DAQ_Analysis_
             /* Chain event => packet => pktio => default input queue => context
                 to find the interface structure associated with the ingress
                 interface of this packet.  This is kind of ridiculous. */
-            intf = (ODP_Interface_t *) odp_queue_get_context(odp_pktio_inq_getdef(odp_packet_input(pkt)));
+            intf = (ODP_Interface_t *) odp_queue_context(odp_pktio_inq_getdef(odp_packet_input(pkt)));
 
             verdict = DAQ_VERDICT_PASS;
             if (!odpc->fcode.bf_insns || sfbpf_filter(odpc->fcode.bf_insns, data, len, len) != 0)
