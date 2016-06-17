@@ -43,6 +43,8 @@ typedef struct _odp_interface
     struct _odp_interface *next;
     struct _odp_interface *peer;
     odp_pktio_t pktio;
+    odp_pktin_queue_t pktin;
+    odp_pktout_queue_t pktout;
     char *ifname;
     int index;
 } ODP_Interface_t;
@@ -56,6 +58,7 @@ typedef struct _odp_context
     uint64_t sched_wait;
     ODP_Interface_t *interfaces;
     odp_pool_t pool;
+    odp_instance_t instance;
     int mode;
     bool debug;
     struct sfbpf_program fcode;
@@ -74,11 +77,7 @@ static void stop_odp_context(ODP_Context_t *odpc)
     {
         if (intf->pktio != ODP_PKTIO_INVALID)
         {
-            if ((queue = odp_pktio_inq_getdef(intf->pktio)) != ODP_QUEUE_INVALID)
-            {
-                odp_pktio_inq_remdef(intf->pktio);
-                odp_queue_destroy(queue);
-            }
+            odp_pktio_stop(intf->pktio);
             odp_pktio_close(intf->pktio);
             intf->pktio = ODP_PKTIO_INVALID;
         }
@@ -259,28 +258,25 @@ static int odp_daq_start(void *handle)
 {
     ODP_Context_t *odpc = (ODP_Context_t *) handle;
     ODP_Interface_t *intf;
-    odp_queue_param_t qparam;
-    odp_queue_t inq_def;
     odp_pool_param_t params;
-    char inq_name[ODP_QUEUE_NAME_LEN];
     int rval = DAQ_ERROR;
 
     /* Init ODP before calling anything else */
-    if (odp_init_global(NULL, NULL))
+    if (odp_init_global(&odpc->instance, NULL, NULL))
     {
         DPE(odpc->errbuf, "Error: ODP global init failed.");
         goto err;
     }
 
     /* Init this thread */
-    if (odp_init_local(ODP_THREAD_WORKER))
+    if (odp_init_local(odpc->instance, ODP_THREAD_WORKER))
     {
         DPE(odpc->errbuf, "Error: ODP local init failed.");
         goto err;
     }
 
     /* Calculate the scheduler timeout period. */
-    odpc->sched_wait = (odpc->timeout > 0) ? odp_schedule_wait_time(odpc->timeout * 1000000) : ODP_SCHED_WAIT;
+    odpc->sched_wait = (odpc->timeout > 0) ? odp_schedule_wait_time(odpc->timeout * ODP_TIME_MSEC_IN_NS) : ODP_SCHED_WAIT;
 
     /* Create packet pool */
     memset(&params, 0, sizeof(params));
@@ -303,12 +299,14 @@ static int odp_daq_start(void *handle)
     for (intf = odpc->interfaces; intf; intf = intf->next)
     {
         odp_pktio_param_t pktio_param;
+        odp_pktin_queue_param_t pktin_param;
 
-        memset(&pktio_param, 0, sizeof(pktio_param));
+        odp_pktio_param_init(&pktio_param);
+
         if (odpc->mode == ODP_MODE_PKT_BURST)
-            pktio_param.in_mode = ODP_PKTIN_MODE_RECV; 
+            pktio_param.in_mode = ODP_PKTIN_MODE_DIRECT; 
         else if (odpc->mode == ODP_MODE_PKT_SCHED)
-             pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
+            pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
 
         intf->pktio = odp_pktio_open(intf->ifname, odpc->pool, &pktio_param);
         if (intf->pktio == ODP_PKTIO_INVALID)
@@ -318,28 +316,48 @@ static int odp_daq_start(void *handle)
             goto err;
         }
 
+        odp_pktin_queue_param_init(&pktin_param);
+        pktin_param.queue_param.context = intf;
+
         if (odpc->mode == ODP_MODE_PKT_SCHED)
+            pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
+
+        if (odp_pktin_queue_config(intf->pktio, &pktin_param))
         {
-            qparam.sched.prio  = ODP_SCHED_PRIO_DEFAULT;
-            qparam.sched.sync  = ODP_SCHED_SYNC_ATOMIC;
-            qparam.sched.group = ODP_SCHED_GROUP_ALL;
-            qparam.context = intf;
-            snprintf(inq_name, sizeof(inq_name), "%" PRIu64 "-pktio_inq_def", odp_pktio_to_u64(intf->pktio));
+            DPE(odpc->errbuf, "Error: pktin config failed for %s", intf->ifname);
+            rval = DAQ_ERROR;
+            goto err;
+        }
 
-            inq_def = odp_queue_create(inq_name, ODP_QUEUE_TYPE_PKTIN, &qparam);
-            if (inq_def == ODP_QUEUE_INVALID)
+        if (odp_pktout_queue_config(intf->pktio, NULL))
+        {
+            DPE(odpc->errbuf, "Error: pktout config failed for %s", intf->ifname);
+            rval = DAQ_ERROR;
+            goto err;
+        }
+
+        if (odp_pktio_start(intf->pktio))
+        {
+            DPE(odpc->errbuf, "Error: unable to start %s", intf->ifname);
+            rval = DAQ_ERROR;
+            goto err;
+        }
+
+        if (odpc->mode == ODP_MODE_PKT_BURST)
+        {
+            if (odp_pktin_queue(intf->pktio, &intf->pktin, 1) != 1)
             {
-                DPE(odpc->errbuf, "Error: pktio queue creation failed");
+                DPE(odpc->errbuf, "Error: no pktin queue for %s", intf->ifname);
                 rval = DAQ_ERROR;
                 goto err;
             }
+        }
 
-            if (odp_pktio_inq_setdef(intf->pktio, inq_def))
-            {
-                DPE(odpc->errbuf, "Error: default input-Q setup");
-                rval = DAQ_ERROR;
-                goto err;
-            }
+        if (odp_pktout_queue(intf->pktio, &intf->pktout, 1) != 1)
+        {
+            DPE(odpc->errbuf, "Error: no pktout queue for %s", intf->ifname);
+            rval = DAQ_ERROR;
+            goto err;
         }
     }
 
@@ -393,7 +411,7 @@ static int odp_daq_acquire_burst(ODP_Context_t *odpc, int cnt, DAQ_Analysis_Func
                     pkt_burst = cnt - c;
             }
 
-            pkts_recv = odp_pktio_recv(intf->pktio, pkt_tbl_recv, pkt_burst);
+            pkts_recv = odp_pktin_recv(intf->pktin, pkt_tbl_recv, pkt_burst);
             if (pkts_recv < 0)
                 return DAQ_ERROR;
             if (pkts_recv == 0)
@@ -452,7 +470,7 @@ static int odp_daq_acquire_burst(ODP_Context_t *odpc, int cnt, DAQ_Analysis_Func
             }
 
             if (intf->peer && pkts_send > 0)
-                odp_pktio_send(intf->peer->pktio, pkt_tbl_send, pkts_send);
+                odp_pktout_send(intf->peer->pktout, pkt_tbl_send, pkts_send);
         }
     }
     return 0;
@@ -467,6 +485,8 @@ static int odp_daq_acquire_scheduled(ODP_Context_t *odpc, int cnt, DAQ_Analysis_
     odp_event_t ev_tbl_recv[MAX_PKT_BURST];
     odp_packet_t pkt;
     odp_event_t ev;
+    odp_queue_t inq;
+    odp_pktio_t pktio;
     const uint8_t *data;
     uint16_t len;
     int ev_recv, pkt_burst;
@@ -520,7 +540,8 @@ static int odp_daq_acquire_scheduled(ODP_Context_t *odpc, int cnt, DAQ_Analysis_
             /* Chain event => packet => pktio => default input queue => context
                 to find the interface structure associated with the ingress
                 interface of this packet.  This is kind of ridiculous. */
-            intf = (ODP_Interface_t *) odp_queue_context(odp_pktio_inq_getdef(odp_packet_input(pkt)));
+            odp_pktin_event_queue(odp_packet_input(pkt), &inq, 1);
+            intf = (ODP_Interface_t *) odp_queue_context(inq);
 
             verdict = DAQ_VERDICT_PASS;
             if (!odpc->fcode.bf_insns || sfbpf_filter(odpc->fcode.bf_insns, data, len, len) != 0)
@@ -552,10 +573,7 @@ static int odp_daq_acquire_scheduled(ODP_Context_t *odpc, int cnt, DAQ_Analysis_
                 odpc->stats.packets_filtered++;
 
             if (intf->peer && verdict == DAQ_VERDICT_PASS)
-            {
-                /* Enqueue the packet for output */
-                odp_queue_enq(odp_pktio_outq_getdef(intf->peer->pktio), ev);
-            }
+                odp_pktout_send(intf->peer->pktout, &pkt, 1);
             else
                 odp_packet_free(pkt);
         }
@@ -587,21 +605,13 @@ static int odp_daq_inject(void *handle, const DAQ_PktHdr_t *hdr, const uint8_t *
     if (!pkt)
         return DAQ_ERROR_NOMEM;
 
-    if (odp_packet_copydata_in(pkt, 0, len, packet_data) < 0)
+    if (odp_packet_copy_from_mem(pkt, 0, len, packet_data) < 0)
     {
         odp_packet_free(pkt);
         return DAQ_ERROR;
     }
 
-    if (odpc->mode == ODP_MODE_PKT_SCHED)
-    {
-        if (odp_queue_enq(odp_pktio_outq_getdef(intf->pktio), odp_packet_to_event(pkt)) < 0)
-        {
-            odp_packet_free(pkt);
-            return DAQ_ERROR;
-        }
-    }
-    else if (odp_pktio_send(intf->pktio, &pkt, 1) != 1)
+    if (odp_pktout_send(intf->pktout, &pkt, 1) != 1)
     {
         odp_packet_free(pkt);
         return DAQ_ERROR;
@@ -637,10 +647,11 @@ static void odp_daq_shutdown(void *handle)
     ODP_Context_t *odpc = (ODP_Context_t *) handle;
 
     stop_odp_context(odpc);
-    destroy_odp_daq_context(odpc);
 
-    if (odp_term_local() == 0)
-        odp_term_global();
+    odp_term_local(); 
+    odp_term_global(odpc->instance);
+
+    destroy_odp_daq_context(odpc);
 }
 
 static DAQ_State odp_daq_check_status(void *handle)
