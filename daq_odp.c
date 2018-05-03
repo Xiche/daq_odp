@@ -17,12 +17,18 @@
 ** Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 
+/*
+ * Partially based off of example/packet/odp_pktio.c in the ODP source code.
+ */
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
 #include <net/if.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <daq_api.h>
 #include <sfbpf.h>
@@ -47,6 +53,7 @@ typedef struct _odp_interface
     odp_pktout_queue_t pktout;
     char *ifname;
     int index;
+    int disable_promisc_at_exit;
 } ODP_Interface_t;
 
 typedef struct _odp_context
@@ -77,6 +84,8 @@ static void stop_odp_context(ODP_Context_t *odpc)
     {
         if (intf->pktio != ODP_PKTIO_INVALID)
         {
+            if (intf->disable_promisc_at_exit)
+                odp_pktio_promisc_mode_set(intf->pktio, 0);
             odp_pktio_stop(intf->pktio);
             odp_pktio_close(intf->pktio);
             intf->pktio = ODP_PKTIO_INVALID;
@@ -259,7 +268,7 @@ static int odp_daq_start(void *handle)
     ODP_Context_t *odpc = (ODP_Context_t *) handle;
     ODP_Interface_t *intf;
     odp_pool_param_t params;
-    int rval = DAQ_ERROR;
+    int ret, rval = DAQ_ERROR;
 
     /* Init ODP before calling anything else */
     if (odp_init_global(&odpc->instance, NULL, NULL))
@@ -279,7 +288,7 @@ static int odp_daq_start(void *handle)
     odpc->sched_wait = (odpc->timeout > 0) ? odp_schedule_wait_time(odpc->timeout * ODP_TIME_MSEC_IN_NS) : ODP_SCHED_WAIT;
 
     /* Create packet pool */
-    memset(&params, 0, sizeof(params));
+    odp_pool_param_init(&params);
     params.pkt.seg_len = SHM_PKT_POOL_BUF_SIZE;
     params.pkt.len     = SHM_PKT_POOL_BUF_SIZE;
     params.pkt.num     = SHM_PKT_POOL_SIZE/SHM_PKT_POOL_BUF_SIZE;
@@ -336,13 +345,6 @@ static int odp_daq_start(void *handle)
             goto err;
         }
 
-        if (odp_pktio_start(intf->pktio))
-        {
-            DPE(odpc->errbuf, "Error: unable to start %s", intf->ifname);
-            rval = DAQ_ERROR;
-            goto err;
-        }
-
         if (odpc->mode == ODP_MODE_PKT_BURST)
         {
             if (odp_pktin_queue(intf->pktio, &intf->pktin, 1) != 1)
@@ -356,6 +358,33 @@ static int odp_daq_start(void *handle)
         if (odp_pktout_queue(intf->pktio, &intf->pktout, 1) != 1)
         {
             DPE(odpc->errbuf, "Error: no pktout queue for %s", intf->ifname);
+            rval = DAQ_ERROR;
+            goto err;
+        }
+
+        if ((ret = odp_pktio_promisc_mode(intf->pktio)))
+        {
+            if (ret < 0)
+            {
+                DPE(odpc->errbuf, "Error: failed to query promiscuous mode for %s", intf->ifname);
+                rval = DAQ_ERROR;
+                goto err;
+            }
+            else if (ret == 0)
+            {
+                if (odp_pktio_promisc_mode_set(intf->pktio, 1))
+                {
+                    DPE(odpc->errbuf, "Error: failed to enable promiscuous mode for %s", intf->ifname);
+                    rval = DAQ_ERROR;
+                    goto err;
+                }
+                intf->disable_promisc_at_exit = 1;
+            }
+        }
+
+        if (odp_pktio_start(intf->pktio))
+        {
+            DPE(odpc->errbuf, "Error: unable to start %s", intf->ifname);
             rval = DAQ_ERROR;
             goto err;
         }

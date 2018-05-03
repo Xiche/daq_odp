@@ -7,8 +7,8 @@ This module was designed and tested with OpenDataPlane v1.2.0.0.  Their project 
 
 As there are no released source tarballs yet, you must clone the OpenDataPlane GIT repository and build from that.  To checkout, build, and install OpenDataPlane:
 
-    git clone https://git.linaro.org/lng/odp.git -b v1.10.1.0 odp-v1.10.1.0
-    cd odp-v1.10.1.0
+    git clone https://git.linaro.org/lng/odp.git -b v1.19.0.0 odp-v1.19.0.0
+    cd odp-v1.19.0.0
     ./bootstrap
     ./configure
     make
@@ -21,11 +21,11 @@ To specify multiple interfaces, simply provide a string of comma-separated inter
 Supported DAQ variables:
 
     debug - Enable some additional debugging output printed to stdout.
-    mode=<burst|sched> - Configure the mode for sending and receiving packets to either use the pktio instances directly (burst) or use the OpenDataPlane scheduler and queues (sched - Default).  Currently, if you select burst handling, the DAQ timeout value will be ignored.
+    mode=<burst|scheduled> - Configure the mode for sending and receiving packets to either use the pktio instances directly (burst) or use the OpenDataPlane scheduler and queues (scheduled - Default).  Currently, if you select burst handling, the DAQ timeout value will be ignored.
 
 Example:
 
-    ./snort -Q --daq-dir /usr/local/lib/daq --daq odp --daq-var mode=sched --daq-var debug -i eth1,eth2,eth3,eth4
+    ./snort -Q --daq-dir /usr/local/lib/daq --daq odp --daq-var mode=scheduled --daq-var debug -i eth1,eth2,eth3,eth4
   
 This will start Snort in inline mode direcly pairing eth1<->eth2 and eth3<->eth4 for traffic forwarding.  Additional debug output will be enabled and it will handle packets using the ODP scheduler.
 
